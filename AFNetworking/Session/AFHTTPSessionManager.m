@@ -72,6 +72,7 @@
     }
 
     // Ensure terminal slash for baseURL path, so that NSURL +URLWithString:relativeToURL: works as expected
+    //对传过来的BaseURL进行处理，如果有值且最后不包含/，url加上"/"
     if ([[url path] length] > 0 && ![[url absoluteString] hasSuffix:@"/"]) {
         url = [url URLByAppendingPathComponent:@""];
     }

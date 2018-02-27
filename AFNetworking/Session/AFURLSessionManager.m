@@ -31,6 +31,7 @@
 static dispatch_queue_t url_session_manager_creation_queue() {
     static dispatch_queue_t af_url_session_manager_creation_queue;
     static dispatch_once_t onceToken;
+    //保证了即使是在多线程的环境下，也不会创建其他队列
     dispatch_once(&onceToken, ^{
         af_url_session_manager_creation_queue = dispatch_queue_create("com.alamofire.networking.session.manager.creation", DISPATCH_QUEUE_SERIAL);
     });
@@ -40,13 +41,15 @@ static dispatch_queue_t url_session_manager_creation_queue() {
 
 static void url_session_manager_create_task_safely(dispatch_block_t block) {
     //iOS8以下同步确保这个block执行完成 iOS8以后直接执行
-    //block里的内容是        dataTask = [self.session dataTaskWithRequest:request];
-    // iOS8以下的系统在初始化task的时候生成的taskidentifier不唯一
     if (NSFoundationVersionNumber < NSFoundationVersionNumber_With_Fixed_5871104061079552_bug) {
         // Fix of bug
         // Open Radar:http://openradar.appspot.com/radar?id=5871104061079552 (status: Fixed in iOS8)
         // Issue about:https://github.com/AFNetworking/AFNetworking/issues/2093
-        //这里是同步执行
+        //理解下，第一为什么用sync，因为是想要主线程等在这，等执行完，在返回，因为必须执行完dataTask才有数据，传值才有意义。
+        //第二，为什么要用串行队列?
+        //block里的内容是        dataTask = [self.session dataTaskWithRequest:request];
+        //其实现应该是因为iOS 8.0以下版本中会并发地创建多个task对象，而同步有没有做好，导致taskIdentifiers 不唯一…这边做了一个串行处理
+        //这个taskIdentifier是我们后面来映射delegate的key,所以它必须是唯一的
         dispatch_sync(url_session_manager_creation_queue(), block);
     } else {
         block();
@@ -201,6 +204,7 @@ typedef void (^AFURLSessionTaskCompletionHandler)(NSURLResponse *response, id re
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error
 {
+    //1）强引用self.manager，防止被提前释放；因为self.manager声明为weak,类似Block
     __strong AFURLSessionManager *manager = self.manager;
 
     __block id responseObject = nil;
@@ -524,7 +528,8 @@ static NSString * const AFNSURLSessionTaskDidSuspendNotification = @"com.alamofi
     self.operationQueue = [[NSOperationQueue alloc] init];
     //默认串行队列 请求必须一个接一个的执行
     self.operationQueue.maxConcurrentOperationCount = 1;
-
+    
+    //注意代理，代理的继承，实际上NSURLSession去判断了，你实现了哪个方法会去调用，包括子代理的方法！
     self.session = [NSURLSession sessionWithConfiguration:self.sessionConfiguration delegate:self delegateQueue:self.operationQueue];
 
     //返回数据序列化方式
@@ -611,7 +616,7 @@ static NSString * const AFNSURLSessionTaskDidSuspendNotification = @"com.alamofi
     NSParameterAssert(task);
     NSParameterAssert(delegate);
 
-    //使用锁保证mutableTaskDelegatesKeyedByTaskIdentifier属性设置的时候是安全的
+    //使用锁 保证可变的 mutableTaskDelegatesKeyedByTaskIdentifier属性设置的时候是安全的
     [self.lock lock];
     //mutableTaskDelegatesKeyedByTaskIdentifier 这个可变属性 存储了task和delegate
     self.mutableTaskDelegatesKeyedByTaskIdentifier[@(task.taskIdentifier)] = delegate;
@@ -632,6 +637,7 @@ static NSString * const AFNSURLSessionTaskDidSuspendNotification = @"com.alamofi
     delegate.manager = self;
     delegate.completionHandler = completionHandler;
     
+    //这个taskDescriptionForSessionTasks用来发送开始和挂起通知的时候会用到,就是用这个值来Post通知，来两者对应
     dataTask.taskDescription = self.taskDescriptionForSessionTasks;
     //设置task的代理 将task和delegate绑定起来 方便后面可以通过delegate取出对应的task
     [self setDelegate:delegate forTask:dataTask];
@@ -954,6 +960,7 @@ static NSString * const AFNSURLSessionTaskDidSuspendNotification = @"com.alamofi
     return [NSString stringWithFormat:@"<%@: %p, session: %@, operationQueue: %@>", NSStringFromClass([self class]), self, self.session, self.operationQueue];
 }
 
+//复写了selector的方法，这几个方法是在本类有实现的，但是如果外面的Block没赋值的话，则返回NO，相当于没有实现！
 - (BOOL)respondsToSelector:(SEL)selector {
     if (selector == @selector(URLSession:task:willPerformHTTPRedirection:newRequest:completionHandler:)) {
         return self.taskWillPerformHTTPRedirection != nil;
@@ -969,6 +976,13 @@ static NSString * const AFNSURLSessionTaskDidSuspendNotification = @"com.alamofi
 }
 
 #pragma mark - NSURLSessionDelegate
+
+//当前这个session已经失效时，该代理方法被调用。
+/*
+ 如果你使用finishTasksAndInvalidate函数使该session失效，
+ 那么session首先会先完成最后一个task，然后再调用URLSession:didBecomeInvalidWithError:代理方法，
+ 如果你调用invalidateAndCancel方法来使session失效，那么该session会立即调用上面的代理方法。
+ */
 
 - (void)URLSession:(NSURLSession *)session
 didBecomeInvalidWithError:(NSError *)error
@@ -1074,14 +1088,17 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
         completionHandler(inputStream);
     }
 }
-
+    
+/*
+ //周期性地通知代理发送到服务器端数据的进度。
+ */
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
    didSendBodyData:(int64_t)bytesSent
     totalBytesSent:(int64_t)totalBytesSent
 totalBytesExpectedToSend:(int64_t)totalBytesExpectedToSend
 {
-
+    // 如果totalUnitCount获取失败，就使用HTTP header中的Content-Length作为totalUnitCount
     int64_t totalUnitCount = totalBytesExpectedToSend;
     if(totalUnitCount == NSURLSessionTransferSizeUnknown) {
         NSString *contentLength = [task.originalRequest valueForHTTPHeaderField:@"Content-Length"];
@@ -1101,16 +1118,23 @@ totalBytesExpectedToSend:(int64_t)totalBytesExpectedToSend
     }
 }
 
+/*
+ task完成之后的回调，成功和失败都会回调这里
+ 函数讨论：
+ 注意这里的error不会报告服务期端的error，他表示的是客户端这边的eroor，比如无法解析hostname或者连不上host主机。
+ */
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error
 {
+    //根据task去取我们一开始创建绑定的delegate
     AFURLSessionManagerTaskDelegate *delegate = [self delegateForTask:task];
 
     // delegate may be nil when completing a task in the background
     if (delegate) {
+        //把代理转发给我们绑定的delegate
         [delegate URLSession:session task:task didCompleteWithError:error];
-
+        //转发完移除delegate
         [self removeDelegateForTask:task];
     }
 

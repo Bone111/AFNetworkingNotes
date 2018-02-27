@@ -139,7 +139,10 @@ FOUNDATION_EXPORT NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id 
 
 NSString * AFQueryStringFromParameters(NSDictionary *parameters) {
     NSMutableArray *mutablePairs = [NSMutableArray array];
+    //把参数给AFQueryStringPairsFromDictionary，拿到AF的一个类型的数据就一个key，value对象，
+    //在URLEncodedStringValue拼接keyValue，一个加到数组里
     for (AFQueryStringPair *pair in AFQueryStringPairsFromDictionary(parameters)) {
+        //[pair URLEncodedStringValue] [key,value]->key=value
         [mutablePairs addObject:[pair URLEncodedStringValue]];
     }
     //通过&符号链接
@@ -153,6 +156,9 @@ NSArray * AFQueryStringPairsFromDictionary(NSDictionary *dictionary) {
 #pragma mark - 为什么要先进行排序
 NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value) {
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
+    // 根据需要排列的对象的description来进行升序排列，并且selector使用的是compare:
+    // 因为对象的description返回的是NSString，所以此处compare:使用的是NSString的compare函数
+    // 即@[@"foo", @"bar", @"bae"] ----> @[@"bae", @"bar",@"foo"]
 
     NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:@"description" ascending:YES selector:@selector(compare:)];
 
@@ -390,9 +396,12 @@ forHTTPHeaderField:(NSString *)field
 
     NSMutableURLRequest *mutableRequest = [[NSMutableURLRequest alloc] initWithURL:url];
     mutableRequest.HTTPMethod = method;
+    //mutableObservedChangedKeyPaths 中为自己可以设置的一些属性
     // 需要监听的内容放到request中 例如 allowsCellularAccess(是否允许使用移动蜂窝网络)  cachePolicy(缓存策略) 等 可能随时变化的
+    //AFHTTPRequestSerializerObservedKeyPaths() 一个包含很多方法名的数组
     for (NSString *keyPath in AFHTTPRequestSerializerObservedKeyPaths()) {
         if ([self.mutableObservedChangedKeyPaths containsObject:keyPath]) {
+//            用KVC的方式，把属性值都设置到我们请求的request中去。
             [mutableRequest setValue:[self valueForKeyPath:keyPath] forKey:keyPath];
         }
     }
@@ -514,8 +523,8 @@ forHTTPHeaderField:(NSString *)field
     // 参数设置
     NSString *query = nil;
     if (parameters) {
-#pragma warning queryStringSerialization 这个block实现了什么功能
         if (self.queryStringSerialization) {
+            //自定义的方式 如果要自定可以通过实现这个block 完成对参数的组装
             NSError *serializationError;
             // 查询字符的序列化？
             query = self.queryStringSerialization(request, parameters, &serializationError);
@@ -528,6 +537,7 @@ forHTTPHeaderField:(NSString *)field
                 return nil;
             }
         } else {
+            //默认的方式
             //这里对参数进行序列化 最后产生的query是 name=bang&phone[mobile]=xx这种格式
             switch (self.queryStringSerializationStyle) {
                 case AFHTTPRequestQueryStringDefaultStyle:
