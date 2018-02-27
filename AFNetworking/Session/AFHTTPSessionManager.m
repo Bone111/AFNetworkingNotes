@@ -77,7 +77,7 @@
     }
 
     self.baseURL = url;
-
+    // 设置 请求的参数序列化方式 以及服务端返回数据的序列化方式
     self.requestSerializer = [AFHTTPRequestSerializer serializer];
     self.responseSerializer = [AFJSONResponseSerializer serializer];
 
@@ -115,7 +115,7 @@
     [super setSecurityPolicy:securityPolicy];
 }
 
-#pragma mark -
+#pragma mark - Task 生成 包含 GET HEAD POST PUT PATCH DELETE
 
 - (NSURLSessionDataTask *)GET:(NSString *)URLString
                    parameters:(id)parameters
@@ -132,7 +132,7 @@
                       success:(void (^)(NSURLSessionDataTask * _Nonnull, id _Nullable))success
                       failure:(void (^)(NSURLSessionDataTask * _Nullable, NSError * _Nonnull))failure
 {
-
+    //task的生成
     NSURLSessionDataTask *dataTask = [self dataTaskWithHTTPMethod:@"GET"
                                                         URLString:URLString
                                                        parameters:parameters
@@ -140,7 +140,7 @@
                                                  downloadProgress:downloadProgress
                                                           success:success
                                                           failure:failure];
-
+    // 开始执行这个请求
     [dataTask resume];
 
     return dataTask;
@@ -273,9 +273,12 @@
                                          failure:(void (^)(NSURLSessionDataTask *, NSError *))failure
 {
     NSError *serializationError = nil;
+    //生成Request
     NSMutableURLRequest *request = [self.requestSerializer requestWithMethod:method URLString:[[NSURL URLWithString:URLString relativeToURL:self.baseURL] absoluteString] parameters:parameters error:&serializationError];
+    //参数序列化是否正确
     if (serializationError) {
         if (failure) {
+            //指定队列去执行某一个操作 我们在做一些复杂内容时可以这么做
             dispatch_async(self.completionQueue ?: dispatch_get_main_queue(), ^{
                 failure(nil, serializationError);
             });
@@ -285,6 +288,7 @@
     }
 
     __block NSURLSessionDataTask *dataTask = nil;
+    //根据request 生成 task
     dataTask = [self dataTaskWithRequest:request
                           uploadProgress:uploadProgress
                         downloadProgress:downloadProgress

@@ -111,7 +111,28 @@ NSString * AFPercentEscapedStringFromString(NSString *string) {
 
 @end
 
-#pragma mark -
+#pragma mark - 将参数进行拼接
+/**
+ @{
+ @"name" : @"bang",
+ @"phone": @{@"mobile": @"xx", @"home": @"xx"},
+ @"families": @[@"father", @"mother"],
+ @"nums": [NSSet setWithObjects:@"1", @"2", nil]
+ }
+ ->
+ @[
+ field: @"name", value: @"bang",
+ field: @"phone[mobile]", value: @"xx",
+ field: @"phone[home]", value: @"xx",
+ field: @"families[]", value: @"father",
+ field: @"families[]", value: @"mother",
+ field: @"nums", value: @"1",
+ field: @"nums", value: @"2",
+ ]
+ ->
+ name=bang&phone[mobile]=xx&phone[home]=xx&families[]=father&families[]=mother&nums=1&num=2
+
+ */
 
 FOUNDATION_EXPORT NSArray * AFQueryStringPairsFromDictionary(NSDictionary *dictionary);
 FOUNDATION_EXPORT NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value);
@@ -121,7 +142,7 @@ NSString * AFQueryStringFromParameters(NSDictionary *parameters) {
     for (AFQueryStringPair *pair in AFQueryStringPairsFromDictionary(parameters)) {
         [mutablePairs addObject:[pair URLEncodedStringValue]];
     }
-
+    //通过&符号链接
     return [mutablePairs componentsJoinedByString:@"&"];
 }
 
@@ -129,6 +150,7 @@ NSArray * AFQueryStringPairsFromDictionary(NSDictionary *dictionary) {
     return AFQueryStringPairsFromKeyAndValue(nil, dictionary);
 }
 
+#pragma mark - 为什么要先进行排序
 NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value) {
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
 
@@ -136,6 +158,7 @@ NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value) {
 
     if ([value isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dictionary = value;
+        //对字典的key排序以保证querystring中的一致性 这对于当 反序列化潜在的不明确的序列有效 比如字典数组
         // Sort dictionary keys to ensure consistent ordering in query string, which is important when deserializing potentially ambiguous sequences, such as an array of dictionaries
         for (id nestedKey in [dictionary.allKeys sortedArrayUsingDescriptors:@[ sortDescriptor ]]) {
             id nestedValue = dictionary[nestedKey];
@@ -350,13 +373,14 @@ forHTTPHeaderField:(NSString *)field
     self.queryStringSerialization = block;
 }
 
-#pragma mark -
+#pragma mark - 拼装Request
 
 - (NSMutableURLRequest *)requestWithMethod:(NSString *)method
                                  URLString:(NSString *)URLString
                                 parameters:(id)parameters
                                      error:(NSError *__autoreleasing *)error
 {
+    //先用断言判断必要条件
     NSParameterAssert(method);
     NSParameterAssert(URLString);
 
@@ -366,15 +390,16 @@ forHTTPHeaderField:(NSString *)field
 
     NSMutableURLRequest *mutableRequest = [[NSMutableURLRequest alloc] initWithURL:url];
     mutableRequest.HTTPMethod = method;
-
+    // 需要监听的内容放到request中 例如 allowsCellularAccess(是否允许使用移动蜂窝网络)  cachePolicy(缓存策略) 等 可能随时变化的
     for (NSString *keyPath in AFHTTPRequestSerializerObservedKeyPaths()) {
         if ([self.mutableObservedChangedKeyPaths containsObject:keyPath]) {
             [mutableRequest setValue:[self valueForKeyPath:keyPath] forKey:keyPath];
         }
     }
-
+    //根据具体的请求方式拼接出完整的request
+    //mutableCopy 深复制
     mutableRequest = [[self requestBySerializingRequest:mutableRequest withParameters:parameters error:error] mutableCopy];
-
+    
 	return mutableRequest;
 }
 
@@ -469,26 +494,30 @@ forHTTPHeaderField:(NSString *)field
     return mutableRequest;
 }
 
-#pragma mark - AFURLRequestSerialization
+#pragma mark - AFURLRequestSerialization  参数序列化
 
 - (NSURLRequest *)requestBySerializingRequest:(NSURLRequest *)request
                                withParameters:(id)parameters
                                         error:(NSError *__autoreleasing *)error
 {
     NSParameterAssert(request);
-
+    //复制出一个可变的request
     NSMutableURLRequest *mutableRequest = [request mutableCopy];
-
+    //header设置
+    //遍历 HTTPRequestHeaders  如果当前request的header里没有这个参数就设置
     [self.HTTPRequestHeaders enumerateKeysAndObjectsUsingBlock:^(id field, id value, BOOL * __unused stop) {
         if (![request valueForHTTPHeaderField:field]) {
             [mutableRequest setValue:value forHTTPHeaderField:field];
         }
     }];
 
+    // 参数设置
     NSString *query = nil;
     if (parameters) {
+#pragma warning queryStringSerialization 这个block实现了什么功能
         if (self.queryStringSerialization) {
             NSError *serializationError;
+            // 查询字符的序列化？
             query = self.queryStringSerialization(request, parameters, &serializationError);
 
             if (serializationError) {
@@ -499,6 +528,7 @@ forHTTPHeaderField:(NSString *)field
                 return nil;
             }
         } else {
+            //这里对参数进行序列化 最后产生的query是 name=bang&phone[mobile]=xx这种格式
             switch (self.queryStringSerializationStyle) {
                 case AFHTTPRequestQueryStringDefaultStyle:
                     query = AFQueryStringFromParameters(parameters);
@@ -506,12 +536,13 @@ forHTTPHeaderField:(NSString *)field
             }
         }
     }
-
+    //如果请求的方式是 GET HEAD DELETE 这三种请求 需要重新拼接requestURL 将参数拼接在URL后面
     if ([self.HTTPMethodsEncodingParametersInURI containsObject:[[request HTTPMethod] uppercaseString]]) {
         if (query && query.length > 0) {
             mutableRequest.URL = [NSURL URLWithString:[[mutableRequest.URL absoluteString] stringByAppendingFormat:mutableRequest.URL.query ? @"&%@" : @"?%@", query]];
         }
     } else {
+        // 如果是其他请求 需要将参数放在请求的body中 同时设置请求的Content-Type
         // #2864: an empty string is a valid x-www-form-urlencoded payload
         if (!query) {
             query = @"";
@@ -521,7 +552,7 @@ forHTTPHeaderField:(NSString *)field
         }
         [mutableRequest setHTTPBody:[query dataUsingEncoding:self.stringEncoding]];
     }
-
+    //rquest 拼接完成
     return mutableRequest;
 }
 
