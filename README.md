@@ -458,8 +458,19 @@ didCompleteWithError:(NSError *)error
 }
 ```
 
+## AFNetworking之于https认证
 
+![https认证过程](https://upload-images.jianshu.io/upload_images/2702646-c6f158b5d4ad4602.jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/648)
 
+描述：
+
+* 1、就是用户发起请求，服务器响应后返回一个证书，证书中包含一些基本信息和公钥。
+* 2、用户拿到证书后，去验证这个证书是否合法，不合法，则请求终止。
+* 3、合法则生成一个随机数，作为对称加密的密钥，用服务器返回的公钥对这个随机数加密。然后返回给服务器。
+* 4、服务器拿到加密后的随机数，利用私钥解密，然后再用解密后的随机数（对称密钥），把需要返回的数据加密，加密完成后数据传输给用户。
+* 5、最后用户拿到加密的数据，用一开始的那个随机数（对称密钥），进行数据解密。整个过程完成。
+
+[https双向认证](http://blog.csdn.net/duanbokan/article/details/50847612)
 
 
 

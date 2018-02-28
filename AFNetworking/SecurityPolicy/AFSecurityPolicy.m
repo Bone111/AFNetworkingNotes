@@ -220,9 +220,19 @@ static NSArray * AFPublicKeyTrustChainForServerTrust(SecTrustRef serverTrust) {
 
 #pragma mark -
 
+/**
+ https认证
+
+ @param serverTrust 一个容器，装了服务器端需要验证的证书的基本信息、公钥等等，不仅如此，它还可以装一些评估策略，
+ 还有客户端的锚点证书，这个客户端的证书，可以用来和服务端的证书去匹配验证的。
+ @param domain 服务器域名
+ @return 验证结果
+ */
 - (BOOL)evaluateServerTrust:(SecTrustRef)serverTrust
                   forDomain:(NSString *)domain
 {
+    //如果有域名 切允许自建证书 则需要验证
+    //需要验证 则必须不能是AFSSLPinningModeNone 或者 添加到项目里的证书为0个
     if (domain && self.allowInvalidCertificates && self.validatesDomainName && (self.SSLPinningMode == AFSSLPinningModeNone || [self.pinnedCertificates count] == 0)) {
         // https://developer.apple.com/library/mac/documentation/NetworkingInternet/Conceptual/NetworkingTopics/Articles/OverridingSSLChainValidationCorrectly.html
         //  According to the docs, you should only trust your provided certs for evaluation.
@@ -237,17 +247,25 @@ static NSArray * AFPublicKeyTrustChainForServerTrust(SecTrustRef serverTrust) {
     }
 
     NSMutableArray *policies = [NSMutableArray array];
+    //验证域名
     if (self.validatesDomainName) {
+        // 如果需要验证domain，那么就使用SecPolicyCreateSSL函数创建验证策略，其中第一个参数为true表示验证整个SSL证书链，
+        //第二个参数传入domain，用于判断整个证书链上叶子节点表示的那个domain是否和此处传入domain一致
+        //添加验证策略
         [policies addObject:(__bridge_transfer id)SecPolicyCreateSSL(true, (__bridge CFStringRef)domain)];
     } else {
         [policies addObject:(__bridge_transfer id)SecPolicyCreateBasicX509()];
     }
-
+    
+    // 为serverTrust设置验证策略，即告诉客户端如何验证serverTrust
     SecTrustSetPolicies(serverTrust, (__bridge CFArrayRef)policies);
 
+    //有验证策略了，可以去验证了。如果是AFSSLPinningModeNone，是自签名，直接返回可信任，否则不是自签名的就去系统根证书里去找是否有匹配的证书。
     if (self.SSLPinningMode == AFSSLPinningModeNone) {
+        //如果支持自签名，直接返回YES,不允许才去判断第二个条件，判断serverTrust是否有效
         return self.allowInvalidCertificates || AFServerTrustIsValid(serverTrust);
     } else if (!AFServerTrustIsValid(serverTrust) && !self.allowInvalidCertificates) {
+        //如果验证无效AFServerTrustIsValid，而且allowInvalidCertificates不允许自签，返回NO
         return NO;
     }
 

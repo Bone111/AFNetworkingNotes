@@ -41,6 +41,16 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  The criteria by which server trust should be evaluated against the pinned SSL certificates. Defaults to `AFSSLPinningModeNone`.
  */
+//https验证模式
+//typedef NS_ENUM(NSUInteger, AFSSLPinningMode) {
+//    //不验证
+//    AFSSLPinningModeNone,
+//    //只验证公钥
+//    AFSSLPinningModePublicKey,
+//    //验证证书
+//    AFSSLPinningModeCertificate,
+//};
+
 @property (readonly, nonatomic, assign) AFSSLPinningMode SSLPinningMode;
 
 /**
@@ -50,16 +60,19 @@ NS_ASSUME_NONNULL_BEGIN
  
  Note that if pinning is enabled, `evaluateServerTrust:forDomain:` will return true if any pinned certificate matches.
  */
+//可以去匹配服务端证书验证的证书 如果pinning是enable的`evaluateServerTrust:forDomain:`如果证书匹配会返回true
 @property (nonatomic, strong, nullable) NSSet <NSData *> *pinnedCertificates;
 
 /**
  Whether or not to trust servers with an invalid or expired SSL certificates. Defaults to `NO`.
  */
+//是否支持非法的证书（例如自签名证书）
 @property (nonatomic, assign) BOOL allowInvalidCertificates;
 
 /**
  Whether or not to validate the domain name in the certificate's CN field. Defaults to `YES`.
  */
+//是否去验证证书域名是否匹配
 @property (nonatomic, assign) BOOL validatesDomainName;
 
 ///-----------------------------------------
